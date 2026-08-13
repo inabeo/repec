@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vocabulary-output", type=Path, default=DEFAULT_VOCABULARY)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--min-train-label-count", type=int, default=50)
+    parser.add_argument("--policy-version", type=int, default=1)
     return parser.parse_args()
 
 
@@ -43,7 +44,7 @@ def main() -> None:
     except ImportError as error:
         raise RuntimeError(
             "Parquet output requires pyarrow. Install it with: "
-            "python -m pip install pyarrow"
+            "uv sync"
         ) from error
 
     train_frequency = Counter()
@@ -105,15 +106,20 @@ def main() -> None:
     os.replace(parquet_temporary, args.parquet_output)
 
     vocabulary_payload = {
-        "policy_version": 1,
+        "policy_version": args.policy_version,
         "minimum_training_examples": args.min_train_label_count,
         "labels_2digit": vocabulary,
         "training_frequency": {label: train_frequency[label] for label in vocabulary},
     }
-    args.vocabulary_output.write_text(
+    vocabulary_temporary = args.vocabulary_output.with_name(
+        args.vocabulary_output.name + ".tmp"
+    )
+    vocabulary_temporary.write_text(
         json.dumps(vocabulary_payload, indent=2) + "\n", encoding="utf-8"
     )
+    os.replace(vocabulary_temporary, args.vocabulary_output)
     report = {
+        "policy_version": args.policy_version,
         "input": str(args.input),
         "output": str(args.output),
         "parquet_output": str(args.parquet_output),
@@ -124,7 +130,11 @@ def main() -> None:
         "dropped_rows_with_no_in_vocabulary_labels_by_split": dict(sorted(dropped_by_split.items())),
         "removed_label_instances": dict(sorted(removed_label_instances.items())),
     }
-    args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report_temporary = args.report.with_name(args.report.name + ".tmp")
+    report_temporary.write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(report_temporary, args.report)
     print(f"Wrote {sum(kept_by_split.values()):,} model-ready records to {args.output}")
     print(f"Wrote Parquet dataset to {args.parquet_output}")
     print(f"2-digit vocabulary: {len(vocabulary)} labels")

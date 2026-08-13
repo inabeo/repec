@@ -107,7 +107,7 @@ full refresh can take many hours. If the paper-download stage is interrupted,
 resume it with:
 
 ```bash
-uv run python repec/main.py update --database ./repec.db --papers
+python repec/main.py update --database ./repec.db --papers
 ```
 
 ### 2. Extract the raw paper-level dataset
@@ -131,62 +131,95 @@ uv run python src/audit_jel_training_data.py
 The raw extract is written to `data/repec_jel_2015_2026_raw.jsonl`. Do not
 modify it; it is the audit-friendly input to all later steps.
 
-### 3. Audit and clean conservatively
+### 3. Audit and clean conservatively (policy v2)
 
-Run the exact-duplicate audit before cleaning:
-
-```bash
-uv run python src/audit_jel_exact_duplicates.py
-```
-
-Then create the versioned cleaned dataset:
+Build the deterministic duplicate/version map, then create the cleaned dataset:
 
 ```bash
-uv run python src/clean_jel_training_data.py
+uv run python src/audit_jel_near_duplicates.py
+uv run python src/clean_jel_training_data_v2.py
 ```
 
-Cleaning policy v1 normalizes whitespace and residual HTML, replaces encoding
-replacement characters, removes clear placeholder/very short abstracts, and
-handles exact duplicate text. It preserves one earliest record for an
-identical-label duplicate group and excludes duplicate groups whose 2-digit
-labels conflict. All excluded records are retained with an explicit
-`removal_reason` in `data/repec_jel_2015_2026_excluded_v1.jsonl`.
+Policy v2 normalizes whitespace and residual HTML, replaces encoding
+replacement characters, and removes clear placeholder or very short abstracts.
+It groups exact duplicates and only high-confidence near-duplicate paper
+versions. Matching uses text alone: labels and split names never determine a
+match. The earliest `(year, pid)` record is retained, so later validation/test
+labels cannot affect training-row selection.
 
-### 4. Fix the model label vocabulary and write Parquet
+The matching thresholds and examples are recorded in
+`reports/repec_jel_near_duplicate_audit_v2.json`. The reusable mapping is
+written to `data/repec_jel_duplicate_map_v2.jsonl`. Every excluded raw record,
+its `removal_reason`, and its representative paper are retained in
+`data/repec_jel_2015_2026_excluded_v2.jsonl`.
 
-First inspect label support using the training period only:
+### 4. Audit labels, fix the vocabulary, and write Parquet
+
+Review unusually high label counts and determine label support using the
+training period only:
 
 ```bash
-uv run python src/audit_jel_label_vocabulary.py
+uv run python src/audit_jel_label_cardinality.py
+uv run python src/audit_jel_label_vocabulary.py \
+  --input data/repec_jel_2015_2026_clean_v2.jsonl \
+  --output reports/repec_jel_label_vocabulary_audit_v2.json
 ```
 
-Then produce the model-ready artifacts:
+High-cardinality records are retained in v2. They are rare (95 records have 15
+or more 2-digit labels), their codes are syntactically valid, and an automatic
+cap would discard potentially legitimate multi-topic papers. The decision and
+examples are recorded in `reports/repec_jel_label_cardinality_v2.json`.
+
+Produce the model-ready artifacts with the selected minimum of 50 training
+examples per 2-digit label:
 
 ```bash
-uv run python src/prepare_jel_model_data.py
+uv run python src/prepare_jel_model_data.py \
+  --input data/repec_jel_2015_2026_clean_v2.jsonl \
+  --output data/repec_jel_2015_2026_model_v2.jsonl \
+  --parquet-output data/repec_jel_2015_2026_model_v2.parquet \
+  --vocabulary-output data/jel_2digit_vocabulary_v2.json \
+  --report reports/repec_jel_model_v2_report.json \
+  --min-train-label-count 50 \
+  --policy-version 2
 ```
 
-The current v1 policy retains 2-digit labels with at least 50 occurrences in
-the 2015–2023 training split. This yields 134 labels. The script writes:
+This yields 134 2-digit labels. The current model artifacts are:
 
 | File | Purpose |
 |---|---|
-| `data/repec_jel_2015_2026_model_v1.parquet` | model input; 1 row per paper |
-| `data/repec_jel_2015_2026_model_v1.jsonl` | readable/auditable equivalent |
-| `data/jel_2digit_vocabulary_v1.json` | fixed 2-digit label ordering and training frequencies |
-| `reports/repec_jel_model_v1_report.json` | retained/dropped record summary |
+| `data/repec_jel_2015_2026_model_v2.parquet` | authoritative model input; 1 row per paper |
+| `data/repec_jel_2015_2026_model_v2.jsonl` | readable/auditable equivalent |
+| `data/jel_2digit_vocabulary_v2.json` | fixed 2-digit label ordering and training frequencies |
+| `reports/repec_jel_model_v2_report.json` | retained/dropped record summary |
 
 The Parquet file contains `pid`, `handle`, `year`, `split`, `title`,
 `abstract`, `text`, `labels_1digit`, and `labels_2digit`. Both label columns
 are native string arrays. Use the vocabulary JSON—not incidental alphabetical
 ordering in a training library—as the authoritative 2-digit head order.
 
+### 5. Freeze provenance and checksums
+
+After all preceding artifacts have been generated, create the dataset
+manifest. Hashing the 16 GB source database can take a little while:
+
+```bash
+uv run python src/create_jel_dataset_manifest.py
+```
+
+`reports/repec_jel_model_v2_manifest.json` records the source database refresh
+date and checksum, dataset policy, temporal split, counts, environment,
+pipeline-script checksums, artifact checksums, and exact reproduction commands.
+The 2026 holdout is explicitly identified as a partial-year snapshot.
+
 ### Re-running the pipeline
 
 Run the steps in order whenever the source database is refreshed. The scripts
 are deterministic for a fixed database, and their versioned outputs make it
-possible to compare later cleaning or vocabulary policies without overwriting
-the raw source data.
+possible to compare policies without overwriting the raw source data. Treat
+the v2 Parquet and vocabulary recorded in a manifest as frozen once model
+experiments begin; a later database refresh should receive a new policy or
+snapshot version.
 
 ## Applications
 
