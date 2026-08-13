@@ -1,0 +1,19 @@
+[project]
+name = "repec-jel-training"
+version = "0.1.0"
+description = "RePEc database refresh and reproducible JEL training-data pipeline"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+downloader = [
+    "html5lib",
+    "lxml",
+    "requests",
+]
+
+[tool.uv]
+package = false

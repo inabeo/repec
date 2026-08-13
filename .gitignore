@@ -1,0 +1,11 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+
+# Large, reproducible local artifacts
+*.db
+*.db-journal
+*.db-wal
+data/
+reports/
