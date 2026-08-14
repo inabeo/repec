@@ -221,6 +221,32 @@ the v2 Parquet and vocabulary recorded in a manifest as frozen once model
 experiments begin; a later database refresh should receive a new policy or
 snapshot version.
 
+### Policy v3: separate raw labels from model targets
+
+Policy v3 leaves the cleaned source labels untouched and writes separate model
+target columns. It excludes broad `*0` codes (such as `A0`) only from the
+2-digit target head and its vocabulary. Their parent letters remain in the
+1-digit targets. Rows without a usable 2-digit target are retained so they can
+still train and evaluate the 1-digit head; use `has_2digit_target` to mask
+those rows for 2-digit loss and metrics.
+
+```bash
+uv run python src/prepare_jel_model_data_v3.py
+```
+
+The command reads `data/repec_jel_2015_2026_clean_v2.jsonl` and writes these
+new artifacts without changing v2:
+
+| File | Purpose |
+|---|---|
+| `data/repec_jel_2015_2026_model_v3.parquet` | model input with raw and target label fields |
+| `data/repec_jel_2015_2026_model_v3.jsonl` | readable/auditable equivalent |
+| `data/jel_2digit_vocabulary_v3.json` | training-only, non-broad 2-digit vocabulary |
+| `reports/repec_jel_model_v3_report.json` | target coverage and broad-code exclusion metrics |
+
+The v3 schema retains raw `labels_1digit` and `labels_2digit`, and adds
+`labels_1digit_target`, `labels_2digit_target`, and `has_2digit_target`.
+
 ## Applications
 
 * The other day, I made a web page where you can check trends in economics. It's like a toy version of google trends but then based on words from titles and abstracts from RePEc. Some trends are suggestive, e.g. [it's all about new results](https://dubovik.eu/blog/repec?t=replicate&t=reproduce&t=verify&t=novel).
